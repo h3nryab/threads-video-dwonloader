@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "Threads Video Downloader",
+  "short_name": "Threads Downloader",
+  "description": "Unduh video Threads publik yang boleh Anda simpan.",
+  "lang": "id",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f6fa",
+  "theme_color": "#101828",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
