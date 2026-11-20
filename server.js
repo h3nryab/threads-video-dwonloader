@@ -18,12 +18,10 @@ app.use('/api/', rateLimit({ windowMs: 60_000, limit: 5, standardHeaders: true, 
 function isThreadsHost(hostname) {
   return ['threads.net', 'threads.com'].includes(hostname.toLowerCase().replace(/^www\./, ''));
 }
-
 function isSupportedPostPath(pathname) {
   return /^\/@[^/]+\/post\/[A-Za-z0-9_-]+\/?$/.test(pathname)
     || /^\/t\/[A-Za-z0-9_-]+\/?$/.test(pathname);
 }
-
 function validateThreadsUrl(raw) {
   let u;
   try { u = new URL(String(raw || '').trim()); } catch { throw new Error('Masukkan tautan Threads yang valid.'); }
@@ -35,13 +33,9 @@ function validateThreadsUrl(raw) {
   }
   return u.toString();
 }
-
-// Threads share links can redirect to the canonical post URL. If Threads does not
-// expose the redirect/canonical URL, keep the original share link for yt-dlp.
 async function resolveShareUrl(rawUrl) {
   const original = new URL(rawUrl);
   if (!/^\/share\//.test(original.pathname)) return rawUrl;
-
   try {
     const response = await fetch(rawUrl, {
       redirect: 'follow',
@@ -50,13 +44,11 @@ async function resolveShareUrl(rawUrl) {
     });
     const finalUrl = new URL(response.url);
     if (isThreadsHost(finalUrl.hostname) && isSupportedPostPath(finalUrl.pathname)) return finalUrl.toString();
-
     const html = await response.text();
     const candidates = [
       html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1],
       html.match(/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i)?.[1]
     ].filter(Boolean);
-
     for (const candidate of candidates) {
       try {
         const u = new URL(candidate, finalUrl);
@@ -68,13 +60,17 @@ async function resolveShareUrl(rawUrl) {
   }
   return rawUrl;
 }
-
-function runYtDlp(url, outDir) {
+function formatForQuality(quality) {
+  if (quality === '720') return 'best[height<=720][ext=mp4]/best[height<=720]/best[ext=mp4]/best';
+  if (quality === '480') return 'best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best';
+  return 'best[ext=mp4]/best';
+}
+function runYtDlp(url, outDir, quality) {
   return new Promise((resolve, reject) => {
     const args = [
       '-m', 'yt_dlp', '--no-warnings', '--no-playlist', '--no-part',
       '--socket-timeout', '20', '--retries', '1', '--max-filesize', String(MAX_BYTES),
-      '-f', 'best[ext=mp4]/best',
+      '-f', formatForQuality(quality),
       '-o', path.join(outDir, '%(id)s.%(ext)s'),
       '--print', 'after_move:filepath', url
     ];
@@ -83,7 +79,7 @@ function runYtDlp(url, outDir) {
     const timer = setTimeout(() => child.kill('SIGKILL'), 180_000);
     child.stdout.on('data', d => stdout += d.toString());
     child.stderr.on('data', d => stderr += d.toString());
-    child.on('error', err => { clearTimeout(timer); reject(new Error('Mesin downloader belum terpasang. Periksa panduan instalasi.')); });
+    child.on('error', () => { clearTimeout(timer); reject(new Error('Mesin downloader belum terpasang. Periksa panduan instalasi.')); });
     child.on('close', code => {
       clearTimeout(timer);
       if (code !== 0) {
@@ -98,18 +94,17 @@ function runYtDlp(url, outDir) {
     });
   });
 }
-
-app.get('/api/health', (_req, res) => res.json({ ok: true, extractor: 'yt-dlp + optional Threads plugin', shareLinks: true }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, extractor: 'yt-dlp + optional Threads plugin', shareLinks: true, qualityOptions: ['best', '720', '480'], history: 'local-device' }));
 app.post('/api/download', async (req, res) => {
   let url;
   try { url = validateThreadsUrl(req.body?.url); }
   catch (e) { return res.status(400).json({ error: e.message }); }
-
+  const quality = ['best', '720', '480'].includes(req.body?.quality) ? req.body.quality : 'best';
   const workDir = path.join(os.tmpdir(), `threads-dl-${crypto.randomUUID()}`);
   fs.mkdirSync(workDir, { recursive: true, mode: 0o700 });
   try {
     const downloadUrl = await resolveShareUrl(url);
-    const file = await runYtDlp(downloadUrl, workDir);
+    const file = await runYtDlp(downloadUrl, workDir, quality);
     const name = `threads-${path.basename(file).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     res.download(file, name, err => {
       fs.rm(workDir, { recursive: true, force: true }, () => {});
@@ -120,5 +115,4 @@ app.post('/api/download', async (req, res) => {
     res.status(422).json({ error: e.message || 'Download gagal.' });
   }
 });
-
 app.listen(PORT, '0.0.0.0', () => console.log(`Threads Downloader berjalan di port ${PORT}`));
